@@ -1,0 +1,48 @@
+trigger StockDeductionTrigger on HandsMen_Order__c (after insert, after update) {
+    Set<Id> productIds = new Set<Id>();
+
+    // Collect product IDs from confirmed orders
+    for (HandsMen_Order__c order : Trigger.new) {
+        if (order.Status__c == 'Confirmed' && order.HandsMen_Product__c != null) {
+            productIds.add(order.HandsMen_Product__c);
+        }
+    }
+
+    if (productIds.isEmpty()) return;
+
+    // Query related inventories
+    Map<Id, Inventory__c> inventoryMap = new Map<Id, Inventory__c>(
+        [SELECT Id, Stock_Quantity__c, HandsMen_Product__c 
+         FROM Inventory__c 
+         WHERE HandsMen_Product__c IN :productIds]
+    );
+
+    List<Inventory__c> inventoriesToUpdate = new List<Inventory__c>();
+
+    for (HandsMen_Order__c order : Trigger.new) {
+        if (order.Status__c == 'Confirmed' && order.HandsMen_Product__c != null) {
+            // Find the matching inventory
+            Inventory__c inv = null;
+            for (Inventory__c i : inventoryMap.values()) {
+                if (i.HandsMen_Product__c == order.HandsMen_Product__c) {
+                    inv = i;
+                    break;
+                }
+            }
+
+            if (inv != null) {
+                // Check if order quantity exceeds stock
+                if (order.Quantity__c > inv.Stock_Quantity__c) {
+                    order.addError('Order quantity should not exceed the stock available (' + inv.Stock_Quantity__c + ').');
+                } else {
+                    inv.Stock_Quantity__c -= order.Quantity__c;
+                    inventoriesToUpdate.add(inv);
+                }
+            }
+        }
+    }
+
+    if (!inventoriesToUpdate.isEmpty()) {
+        update inventoriesToUpdate;
+    }
+}
